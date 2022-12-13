@@ -1,0 +1,289 @@
+import math
+from opentrons import protocol_api
+metadata = {'apiLevel':'2.8'}
+
+#note api 2.0 does not support height from base as an argument for magnetic_module.engage(). pass argument height = 20.0 if on api 2.0
+#engagement height needs to be determined by user for their specific labware
+
+
+
+def run(protocol: protocol_api.ProtocolContext):
+
+    def weird_pickup(sample_number,tiprack2_column):
+    #allows use of 8-channel pipette for sample numbers not divisible by 8
+    #sample number is how many individual samples you need to run
+    #tiprack2_column already set
+
+        extra= sample_number % 8 #number of wella in a partial column
+        dictio = {8:"A", 7:"B", 6:"C", 5:"D", 4:"E", 3:"F", 2:"G", 1:"H"}#indexing of rows in reverse order
+        start_pos2= str(dictio[extra]+str(tiprack2_column)) #8 channel alignment well for tip rack 2
+        p300.pick_up_tip(tips_2[start_pos2]) #pick up tip
+
+    ################################## aspirate solution from reservoir and dispense into plates ###########################################
+    def aspiration(volume,source_pos, target_pos, sample_number,tiprack_column,tiprack2_column,mixbefore,mixafter,returntips):
+    #custom function  like transfer for moving liquid form a reservoir to a 96 well plate
+    #mixbefore and after is number of times you want to mix
+    #tip return = 0 means drop tip, 1=return tip
+
+        sample_weird_start=0
+
+        for i in range(int(sample_number/8)):# i = number of full columns
+
+            if (tiprack_column > 12):#record of tips to be used
+                protocol.pause('!!!!!!!!!!!!please supply new tips!!!!!!!!!!!!!!!')
+                tiprack_column =1
+
+            start_pos = str("A"+str(tiprack_column))
+            p300.pick_up_tip(tips[start_pos])
+            if (mixbefore == 0 and mixafter == 0):
+                p300.transfer(volume, source_pos, target_pos[i], new_tip="never", blow_out = True, blowout_location = "destination well", touch_tip = True)
+
+            elif(mixbefore != 0):
+                p300.transfer(volume, source_pos, target_pos[i], mix_before=(mixbefore,0.4*volume),new_tip="never", blow_out = True, blowout_location = "destination well", touch_tip = True)
+
+            elif(mixafter !=0):
+                p300.transfer(volume, source_pos, target_pos[i], mix_after=(mixafter,0.4*volume),new_tip="never", blow_out = True, blowout_location = "destination well", touch_tip = True)
+
+            elif(mixbefore != 0 and mixafter != 0):
+                p300.transfer(volume, source_pos, target_pos[i], mix_before=(mixbefore,0.4*volume), mix_after=(mixafter,0.4*volume),new_tip="never", blow_out = True, blowout_location = "destination well", touch_tip = True)
+
+            if(returntips == 1):
+                p300.return_tip()
+
+            else:
+                p300.drop_tip()
+                tiprack_column = tiprack_column+1
+            sample_weird_start = i+1
+
+        extra = sample_number % 8
+
+        if (extra != 0):#wells in partial columns that realigns 8-channel for custom sample number
+            if (tiprack2_column > 12):
+                protocol.pause('!!!!!!!!!!!!!!!!please supply new tips!!!!!!!!!!!!')
+                tiprack2_column =1
+
+            weird_pickup(sample_number,tiprack2_column)
+            if (mixbefore == 0 and mixafter == 0):
+                p300.transfer(volume, source_pos, target_pos[sample_weird_start], new_tip="never", blow_out = True, blowout_location = "destination well", touch_tip = True)
+
+            elif(mixbefore != 0):
+                p300.transfer(volume, source_pos, target_pos[sample_weird_start],mix_before=(mixbefore, 0.4*volume), new_tip="never", blow_out = True, blowout_location = "destination well", touch_tip = True)
+
+            elif(mixafter !=0):
+                p300.transfer(volume, source_pos, target_pos[sample_weird_start], mix_after=(mixafter,0.4*volume),new_tip="never", blow_out = True, blowout_location = "destination well", touch_tip = True)
+
+            elif(mixbefore != 0 and mixafter != 0):
+                p300.transfer(volume, source_pos, target_pos[i], mix_before=(mixbefore,0.4*volume), mix_after=(mixafter,0.4*volume),new_tip="never", blow_out = True, blowout_location = "destination well", touch_tip = True)
+
+            if(returntips == 1):
+                p300.return_tip()
+
+            else:
+                p300.drop_tip()
+                tiprack2_column = tiprack2_column+1
+
+        return tiprack_column, tiprack2_column
+
+
+    ################################## aspirate liquids from one plate and dispense into the other plate ###########################################
+    def aspiration_plate2plate(volume,source_pos, target_pos, sample_number,tiprack_column,tiprack2_column,returntips):
+    #ad
+
+        sample_weird_start=0
+
+        for i in range(int(sample_number/8)):
+
+            if (tiprack_column > 12):
+                protocol.pause('!!!!!!!!!!!!please supply new tips!!!!!!!!!!')
+                tiprack_column =1
+
+            start_pos = str("A"+str(tiprack_column))
+            p300.pick_up_tip(tips[start_pos])
+            p300.transfer(volume, source_pos[i], target_pos[i], new_tip="never", blow_out = True, blowout_location = "destination well", touch_tip = True)
+
+            if(returntips == 1):
+                p300.return_tip()
+
+            else:
+                p300.drop_tip()
+                tiprack_column = tiprack_column+1
+
+            sample_weird_start = i+1
+
+        extra = sample_number % 8
+
+        if (extra != 0):
+            if (tiprack2_column > 12):
+                protocol.pause('!!!!!!!!!please supply new tips!!!!!!!!!!!!!')
+                tiprack2_column =1
+
+            weird_pickup(sample_number,tiprack2_column)
+            p300.transfer(volume, source_pos[sample_weird_start], target_pos[sample_weird_start], new_tip="never", blow_out = True, blowout_location = "destination well", touch_tip = True)
+
+            if(returntips == 1):
+                p300.return_tip()
+
+            else:
+                p300.drop_tip()            
+                tiprack2_column = tiprack2_column+1
+
+        return tiprack_column, tiprack2_column
+
+    ################################## aspirate waste from one plate and dispense into the reservoir ###########################################
+    def aspiration_waste(volume,source_pos, target_pos, sample_number,tiprack_column,tiprack2_column,returntips):
+
+        sample_weird_start=0
+
+        for i in range(int(sample_number/8)):
+
+            if (tiprack_column > 12):
+                protocol.pause('!!!!!!!!!!!please supply new tips!!!!!!!!!!!!!')
+                tiprack_column =1
+
+            start_pos = str("A"+str(tiprack_column))
+            p300.pick_up_tip(tips[start_pos])
+            p300.transfer(volume, source_pos[i], target_pos, new_tip="never", blow_out = True, blowout_location = "destination well", touch_tip = True)
+
+            if(returntips == 1):
+                p300.return_tip()
+
+            else:
+                p300.drop_tip()            
+                tiprack_column = tiprack_column+1
+            sample_weird_start = i+1
+
+        extra = sample_number % 8
+
+        if (extra != 0):
+            if (tiprack2_column > 12):
+                protocol.pause('!!!!!!!!!1!!!please supply new tips!!!!!!!!!!!')
+                tiprack2_column =1
+
+            weird_pickup(sample_number,tiprack2_column)
+            p300.transfer(volume, source_pos[sample_weird_start], target_pos, new_tip="never", blow_out = True, blowout_location = "destination well", touch_tip = True)
+
+            if(returntips == 1):
+                p300.return_tip()
+
+            else:
+                p300.drop_tip()            
+                tiprack2_column = tiprack2_column+1
+
+        return tiprack_column, tiprack2_column
+    ############################################################### labware########################################################
+    reservoir = protocol.load_labware('4ti0131_12_reservoir_21000ul', 4)
+    plate = protocol.load_labware('4ti0131_12_reservoir_21000ul', 5)
+    plate_2 = protocol.load_labware('4ti0131_12_reservoir_21000ul', 6)
+    plate_3 = protocol.load_labware('4ti0960rig_96_wellplate_200ul', 3)
+    plate_4 = protocol.load_labware('agilent_1_reservoir_290ml', 2)
+    mag_mod = protocol.load_module('magnetic module', 1)
+    mag_plate = mag_mod.load_labware('4ti0131_12_reservoir_21000ul')
+    tips = protocol.load_labware('opentrons_96_tiprack_300ul', 10)
+    tips_2 = protocol.load_labware('opentrons_96_tiprack_300ul', 11)
+
+    p300 = protocol.load_instrument('p300_multi_gen2', 'left', tip_racks=[tips, tips_2])
+
+    ########################################################define samples and initialize tiprack_column(colunms)##############
+
+    sample_number = 96
+    tiprack_column = 1 # selecting tip rack column allows user to start with partially filled tip box. Range 1-12
+    tiprack2_column = 1
+
+    #######################################################Let's start !!! ############################################
+
+    # 4. add solution I/RNase A
+
+    (tiprack_column,tiprack2_column) = aspiration(250, reservoir['A1'], plate.rows()[0], sample_number,tiprack_column,tiprack2_column,0,0,1)
+
+    # 5. add solution II
+    (tiprack_column,tiprack2_column) = aspiration(250, reservoir['A2'], plate.rows()[0], sample_number,tiprack_column,tiprack2_column,0,1,0)
+
+    # 6. add N3 buffer and LC beads
+    (tiprack_column,tiprack2_column) = aspiration(155, reservoir['A3'],plate.rows()[0], sample_number,tiprack_column,tiprack2_column,1,1,1)
+
+    ##transfer lystates into the mag_plate
+    (tiprack_column,tiprack2_column) = aspiration_plate2plate(700,plate.rows()[0],mag_plate.rows()[0], sample_number,tiprack_column,tiprack2_column,1)
+
+    # 7. magnetic module
+    mag_mod.engage(height_from_base=20.0)
+    protocol.delay(seconds = 7)
+
+    # 8. Transfer to new plate
+    (tiprack_column,tiprack2_column) = aspiration_plate2plate(500, mag_plate.rows()[0],plate_2.rows()[0], sample_number,tiprack_column,tiprack2_column,1)
+    mag_mod.disengage()
+
+    # 9. add ETR and Mag particle
+    (tiprack_column,tiprack2_column) = aspiration(500,reservoir['A5'],plate_2.rows()[0], sample_number,tiprack_column,tiprack2_column,0,0,0)
+    (tiprack_column,tiprack2_column) = aspiration(20,reservoir['A6'],plate_2.rows()[0], sample_number,tiprack_column,tiprack2_column,0,1,1)  
+
+    # 10. wait for 5 minutes
+    protocol.delay(seconds = 7)
+    protocol.pause('remove old plate and place new plate from position 6 onto magnetic device')
+
+    # 11. magnetic module 2
+    mag_mod.engage(height_from_base=20.0)
+    protocol.delay(seconds = 7)
+
+    # 12 aspirate and discard supernatant
+    (tiprack_column,tiprack2_column) = aspiration_waste(950, mag_plate.rows()[0],plate_4.rows()[0], sample_number,tiprack_column,tiprack2_column,1)
+
+    # 13 remove magentic module
+    mag_mod.disengage()
+
+    # 14. add ETR wash buffer and resuspend
+    (tiprack_column,tiprack2_column) = aspiration(500, reservoir['A7'], mag_plate.rows()[0], sample_number,tiprack_column,tiprack2_column,0,1,1)
+
+    # 15. magnetic module 3
+    mag_mod.engage(height_from_base=20.0)
+    protocol.delay(seconds = 7)
+
+    # 16. aspirate and discard supernatant 
+    (tiprack_column,tiprack2_column) = aspiration_waste(450, mag_plate.rows()[0],plate_4.rows()[0], sample_number,tiprack_column,tiprack2_column,1)
+
+    # 17. remove plate from magnetic module
+    mag_mod.disengage()
+
+    # step 18-21 twice. This is stpe 22
+    for n in range(2):
+    # 18. add VHB buffer and resuspend
+        (tiprack_column,tiprack2_column) = aspiration(700, reservoir['A8'], mag_plate.rows()[0], sample_number,tiprack_column,tiprack2_column,0,1,1) 
+
+    # 19. magnetic module 4
+        mag_mod.engage(height_from_base=20.0) # can specify position if needed
+        protocol.delay(seconds = 7)
+
+    # 20. aspirate and discard supernatant 
+        (tiprack_column,tiprack2_column) = aspiration_waste(650, mag_plate.rows()[0],plate_4.rows()[0], sample_number,tiprack_column,tiprack2_column,1)
+
+    # 21. remove plate from magnetic module
+        mag_mod.disengage()
+
+    # 23. add SPM buffer and resuspend
+    (tiprack_column,tiprack2_column) = aspiration(700, reservoir['A9'], mag_plate.rows()[0], sample_number,tiprack_column,tiprack2_column,0,1,1)
+
+
+    # 24. magnetic module 5
+    mag_mod.engage(height_from_base=20.0)
+    protocol.delay(seconds = 7)
+
+    # 25. aspirate and discard supernatant 
+    (tiprack_column,tiprack2_column) = aspiration_waste(650, mag_plate.rows()[0],plate_4.rows()[0], sample_number,tiprack_column,tiprack2_column,1)
+
+    # 26 dry beads
+    protocol.delay(seconds = 7)
+    protocol.pause('Manual removal of liquid from walls needed')
+    protocol.delay(seconds = 7)
+    protocol.pause('Now beads dryed')
+    mag_mod.disengage()
+
+    # 27. add elution buffer
+    (tiprack_column,tiprack2_column) = aspiration(100, reservoir['A10'], mag_plate.rows()[0], sample_number,tiprack_column,tiprack2_column,0,1,1)
+
+    # 28. magnetic module 6
+    mag_mod.engage(height_from_base=20.0)
+    protocol.delay(seconds = 7)
+
+    # 29. transfer to microplate! micro! then store it
+    (tiprack_column,tiprack2_column) = aspiration_plate2plate(90, mag_plate.rows()[0],plate_3.rows()[0], sample_number,tiprack_column,tiprack2_column,0)
+    mag_mod.disengage()
+    protocol.pause('Now store the sample at -20 degree celsius and procedure ends. Go home and relax!')
